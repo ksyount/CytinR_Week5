@@ -4,23 +4,140 @@ format: html
 editor: visual
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+Libraries
 
 ```{r}
-1 + 1
+library(tidyverse)
+library(flowCore) # flowframe and flowset
+library(lobstr) #obj_size()
+library(flowWorkspace) # cytoframe and cytoset
+library(CytoML) # bring in FlowJo wsp with gates, transformations, etc as fully assembled gatingset objects
+
+# ggplot2 recently had a major version change, with significant internal changes occuring. As a consequence of these changes, ggcyto functions that relied on the old ggplot2 functions broke and had to be updated.Bioconductor is on a twice yearly release cycle, so to take advantage of the ggcyto “fixes” that allow it to interact with the new version of ggplot2, we will need to make sure we have the “developmental” version installed.
+# had ggcyto version 1.36.1 installed, need to get developmental update from Github
+# library(remotes)
+# install_github("RGLab/ggcyto")
+library(ggplot2)
+library(ggcyto)
+
 ```
 
-You can add options to executable code like this
+Data
 
 ```{r}
-#| echo: false
-2 * 2
+fcs_files <- list.files("data/", pattern=".fcs", full.names=TRUE)
+
+fcs_files
+fcs_files[1]
+
+flowFrame <- read.FCS(fcs_files[1], truncate_max_range = FALSE, transformation = FALSE)
+flowFrame
+
+# read.FCS() can only handle one file at a time
+# use read.flowSet to import a list of 6 files "flowSet with 6 experiments"
+flowSet <- read.flowSet(fcs_files, truncate_max_range = FALSE, transformation = FALSE)
+flowSet
+
+# Memory usage considerations
+obj_size(flowFrame)
+obj_size(flowSet)
+mem_used()
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+Cytoframe (flowWorkspace)
+
+```{r}
+
+# flowWorkspace saves memory usage
+# use load_cytoframe_from_fcs() instead of read.FCS
+# use load_cytoset_from_fcs() instead of read.flowSet
+
+cytoframe <- load_cytoframe_from_fcs(fcs_files[1], truncate_max_range = FALSE, transformation = FALSE)
+cytoframe
+
+cytoset <- load_cytoset_from_fcs(fcs_files, truncate_max_range = FALSE, transformation = FALSE)
+cytoset
+
+# disk space is less of an issue now but RAM is still pretty limiting
+# some packages don't recognize cytoframe and cytoset but do recognize flowframe and flowset
+
+ConvertedToCytoframe <- flowFrame_to_cytoframe(flowFrame)
+ConvertedToCytoframe
+ConvertedToFlowframe <- flowWorkspace::cytoframe_to_flowFrame(cytoframe)
+ConvertedToFlowframe
+ConvertedToCytoset <- flowSet_to_cytoset(flowSet)
+ConvertedToCytoset
+ConvertedToFlowset <- cytoset_to_flowSet(flowSet)
+ConvertedToFlowset
+
+# Can use either flowset or cytoset to retrieve gatingset
+
+GatingSet1 <- GatingSet(flowSet)
+GatingSet1 
+
+GatingSet2 <- GatingSet(cytoset)
+GatingSet2
+```
+
+CytoML
+
+```{r}
+# FlowJoWSP_Unopened.wsp is same as _OpenedCopy except that _Unopened has log scale values and _OpenedCopy was changed to biexponential in FlowJo
+
+ThisWorkspace <- "data/FlowJoWSP_OpenedCopy.wsp"
+ws <- open_flowjo_xml(ThisWorkspace)
+ws
+
+# some samples share tube names so need to add group name also
+gs <- flowjo_to_gatingset(ws=ws, name=1, path = "data/", additional.keys="GROUPNAME")
+gs
+
+# if we want to know how long a function will take to run:
+system.time({
+
+flowjo_to_gatingset(ws=ws, name=1, path = "data/", additional.keys="GROUPNAME")
+
+})
+
+# inspect manually drawn gates
+plot(gs) # diagram of gating hierarchy
+
+gs_get_pop_paths(gs) # list of gates
+
+Data <- gs_pop_get_count_fast(gs)
+
+pData(gs) #check metadata - in this example just name
+
+```
+
+Plotting with ggcyto
+
+```{r}
+# ggcyto uses ggplot2 grammar
+
+ggcyto(gs[1], # which fcs file to visualize
+       subset = "root", # which gating node to visualize 
+       aes(x="FSC-A", y="SSC-A")) +
+  geom_hex(bins=100)
+
+ggcyto(gs[1], # which fcs file to visualize
+       subset = "CD4+", # which gating node to visualize 
+       aes(x="FSC-A", y="SSC-A")) +
+  geom_hex(bins=100)
+
+ggcyto(gs[1], # which fcs file to visualize
+       subset = "CD8+", # which gating node to visualize 
+       aes(x="IFNg", y="TNFa")) +
+  geom_hex(bins=100)
+
+ggcyto(gs[1], 
+       subset = "CD8+", 
+       aes(x="BV750-A", y="PE-Dazzle594-A")) + # can use channel instead of marker
+  geom_hex(bins=100)
+
+ggcyto(gs[6], 
+       subset="Tcells", 
+       aes(x="CD4", y="CD8")) + 
+  geom_hex(bins=250)
+
+```
